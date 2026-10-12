@@ -1,0 +1,134 @@
+/*
+1. Retrieve an employee's complete record using %ROWTYPE. 
+If the salary is below 10,000, increase it by 15%; otherwise, 
+increase it by 5%. Update the employee's record and display the 
+ revised salary.
+2. Find Employee Salary
+Retrieve the salary of employee ID 105 using SELECT INTO and 
+display it.
+3. Handle NO_DATA_FOUND
+Write a PL/SQL block to retrieve the salary of employee ID 9999. 
+If the employee does not exist, display Employee not found.
+4. Handle TOO_MANY_ROWS
+Write a PL/SQL block that retrieves FIRST_NAME into a single 
+variable for employees in department 50 using SELECT INTO.
+ Handle the exception if multiple rows are returned.
+*/
+
+
+
+
+1.
+
+
+DECLARE
+    v_emp HR.EMPLOYEES%ROWTYPE;
+BEGIN
+    -- Retrieve the employee record
+    SELECT *
+    INTO v_emp
+    FROM HR.EMPLOYEES
+    WHERE EMPLOYEE_ID = 100;
+
+    -- Calculate and update salary
+    IF v_emp.SALARY < 10000 THEN
+        UPDATE HR.EMPLOYEES
+        SET SALARY = SALARY * 1.15
+        WHERE EMPLOYEE_ID = v_emp.EMPLOYEE_ID;
+    ELSE
+        UPDATE HR.EMPLOYEES
+        SET SALARY = SALARY * 1.05
+        WHERE EMPLOYEE_ID = v_emp.EMPLOYEE_ID;
+    END IF;
+
+    -- Retrieve the revised salary
+    SELECT SALARY
+    INTO v_emp.SALARY
+    FROM HR.EMPLOYEES
+    WHERE EMPLOYEE_ID = v_emp.EMPLOYEE_ID;
+
+    DBMS_OUTPUT.PUT_LINE(
+        'Employee ID: ' || v_emp.EMPLOYEE_ID
+    );
+    DBMS_OUTPUT.PUT_LINE(
+        'Revised Salary: ' || v_emp.SALARY
+    );
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        DBMS_OUTPUT.PUT_LINE('Employee not found.');
+END;
+/
+
+2. 
+
+
+DECLARE
+    v_salary HR.EMPLOYEES.SALARY%TYPE;
+BEGIN
+    SELECT SALARY
+    INTO v_salary
+    FROM HR.EMPLOYEES
+    WHERE EMPLOYEE_ID = 105;
+
+    DBMS_OUTPUT.PUT_LINE(
+        'Employee Salary: ' || v_salary
+    );
+END;
+/
+3.
+
+
+
+DECLARE
+    v_salary HR.EMPLOYEES.SALARY%TYPE;
+BEGIN
+    SELECT SALARY
+    INTO v_salary
+    FROM HR.EMPLOYEES
+    WHERE EMPLOYEE_ID = 9999;
+
+    DBMS_OUTPUT.PUT_LINE(
+        'Employee Salary: ' || v_salary
+    );
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        DBMS_OUTPUT.PUT_LINE('Employee not found.');
+END;
+/
+
+4.
+
+
+
+DECLARE
+    v_first_name HR.EMPLOYEES.FIRST_NAME%TYPE;
+BEGIN
+    SELECT FIRST_NAME
+    INTO v_first_name
+    FROM HR.EMPLOYEES
+    WHERE DEPARTMENT_ID = 50;
+
+    DBMS_OUTPUT.PUT_LINE(
+        'First Name: ' || v_first_name
+    );
+
+EXCEPTION
+    WHEN TOO_MANY_ROWS THEN
+        DBMS_OUTPUT.PUT_LINE(
+            'Multiple employees found in department 50.'
+        );
+
+    WHEN NO_DATA_FOUND THEN
+        DBMS_OUTPUT.PUT_LINE(
+            'No employees found in department 50.'
+        );
+END;
+/
+
+
+
+
+
+
