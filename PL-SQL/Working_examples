@@ -127,6 +127,81 @@ EXCEPTION
 END;
 /
 
+CAPTCHA VALIDATIONS
+
+
+--Exercise – Largest of Three Numbers
+
+DECLARE
+    a NUMBER := 25;
+    b NUMBER := 50;
+    c NUMBER := 35;
+    largest NUMBER;
+BEGIN
+
+    IF a >= b AND a >= c THEN
+        largest := a;
+
+    ELSIF b >= a AND b >= c THEN
+        largest := b;
+
+    ELSE
+        largest := c;
+
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE(
+        'Largest = ' || largest
+    );
+
+END;
+/
+
+-- Exercise – Factorial
+
+DECLARE
+    v_number NUMBER := 5;
+    v_factorial NUMBER := 1;
+BEGIN
+
+    FOR i IN 1..v_number
+    LOOP
+        v_factorial := v_factorial * i;
+    END LOOP;
+
+    DBMS_OUTPUT.PUT_LINE(
+        'Factorial = ' || v_factorial
+    );
+
+END;
+/
+
+-- Exercise – Fibonacci
+
+0 1 1 2 3 5 8......
+
+DECLARE
+    v_first NUMBER := 0;
+    v_second NUMBER := 1;
+    v_next NUMBER;
+BEGIN
+
+    DBMS_OUTPUT.PUT_LINE(v_first);
+    DBMS_OUTPUT.PUT_LINE(v_second);
+
+    FOR i IN 3..10
+    LOOP
+
+        v_next := v_first + v_second;
+
+        DBMS_OUTPUT.PUT_LINE(v_next);
+
+        v_first := v_second;
+        v_second := v_next;
+
+    END LOOP;
+
+END;
 
 
 
