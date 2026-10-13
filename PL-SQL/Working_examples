@@ -318,5 +318,99 @@ END;
 
 
 
+--- 2. Procedures and Functions
+-- Example 1: Stored procedure with an IN parameter
+--Problem: Display an employee's name and salary for a given employee ID.
+
+
+CREATE OR REPLACE PROCEDURE show_employee (
+    p_emp_id IN HR.EMPLOYEES.EMPLOYEE_ID%TYPE
+)
+IS
+    v_name HR.EMPLOYEES.FIRST_NAME%TYPE;
+    v_salary HR.EMPLOYEES.SALARY%TYPE;
+BEGIN
+    SELECT FIRST_NAME, SALARY
+    INTO v_name, v_salary
+    FROM HR.EMPLOYEES
+    WHERE EMPLOYEE_ID = p_emp_id;
+
+    DBMS_OUTPUT.PUT_LINE('Name: ' || v_name);
+    DBMS_OUTPUT.PUT_LINE('Salary: ' || v_salary);
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        DBMS_OUTPUT.PUT_LINE('Employee not found.');
+END;
+/
+
+-- Call the procedure: AFTER RUNNING THE ABOVE ONE
+BEGIN
+    show_employee(100);
+END;
+/
+
+-- Example 2: Procedure with an OUT parameter
+-- Problem: Return an employee's salary to the calling PL/SQL block
+
+
+CREATE OR REPLACE PROCEDURE get_salary (
+    p_emp_id IN HR.EMPLOYEES.EMPLOYEE_ID%TYPE,
+    p_salary OUT HR.EMPLOYEES.SALARY%TYPE
+)
+IS
+BEGIN
+    SELECT SALARY
+    INTO p_salary
+    FROM HR.EMPLOYEES
+    WHERE EMPLOYEE_ID = p_emp_id;
+END;
+/
+
+-- calling it inside the stored procedure
+
+DECLARE
+    v_salary HR.EMPLOYEES.SALARY%TYPE;
+BEGIN
+    get_salary(100, v_salary);
+
+    DBMS_OUTPUT.PUT_LINE('Salary: ' || v_salary);
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        DBMS_OUTPUT.PUT_LINE('Employee not found.');
+END;
+/
+
+/*   Concepts: IN, OUT, procedure calls.
+The procedure receives an employee ID and returns the salary through p_salary.  */
+
+Example 3: Procedure with an IN OUT parameter
+
+
+CREATE OR REPLACE PROCEDURE increase_salary_value (
+    p_salary IN OUT NUMBER
+)
+IS
+BEGIN
+    p_salary := p_salary * 1.10;
+END;
+/
+
+-- call it
+
+DECLARE
+    v_salary NUMBER := 20000;
+BEGIN
+    increase_salary_value(v_salary);
+
+    DBMS_OUTPUT.PUT_LINE(
+        'Revised salary: ' || v_salary
+    );
+END;
+/
+
+
+
+
 
 
