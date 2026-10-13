@@ -1,0 +1,93 @@
+
+CREATE TABLE EMP_DEMO (
+    EMPLOYEE_ID NUMBER(6) PRIMARY KEY,
+    FIRST_NAME VARCHAR2(20),
+    SALARY NUMBER(8,2),
+    DEPARTMENT_ID NUMBER(4)
+);
+
+INSERT INTO EMP_DEMO
+VALUES (100, 'Arun', 20000, 50);
+
+INSERT INTO EMP_DEMO
+VALUES (101, 'Priya', 30000, 60);
+
+COMMIT;
+
+
+Example 1: BEFORE INSERT trigger
+Problem: Prevent inserting an employee with a salary less than or equal to zero.
+
+
+CREATE OR REPLACE TRIGGER trg_check_salary
+BEFORE INSERT ON EMP_DEMO
+FOR EACH ROW
+BEGIN
+    IF :NEW.SALARY <= 0 THEN
+        RAISE_APPLICATION_ERROR(
+            -20001,
+            'Salary must be greater than zero'
+        );
+    END IF;
+END;
+/
+
+INSERT INTO EMP_DEMO
+VALUES (102, 'Ravi', -5000, 50);
+
+Example 2: AFTER UPDATE trigger with :OLD and :NEW
+
+
+CREATE TABLE SALARY_AUDIT (
+    EMPLOYEE_ID NUMBER(6),
+    OLD_SALARY NUMBER(8,2),
+    NEW_SALARY NUMBER(8,2),
+    CHANGE_DATE DATE
+);
+
+
+
+CREATE OR REPLACE TRIGGER trg_salary_audit
+AFTER UPDATE OF SALARY ON EMP_DEMO
+FOR EACH ROW
+BEGIN
+    INSERT INTO SALARY_AUDIT (
+        EMPLOYEE_ID,
+        OLD_SALARY,
+        NEW_SALARY,
+        CHANGE_DATE
+    )
+    VALUES (
+        :OLD.EMPLOYEE_ID,
+        :OLD.SALARY,
+        :NEW.SALARY,
+        SYSDATE
+    );
+END;
+/
+
+UPDATE EMP_DEMO
+SET SALARY = 25000
+WHERE EMPLOYEE_ID = 100;
+
+SELECT *
+FROM SALARY_AUDIT;
+
+Example 3: Statement-level DELETE trigger
+
+
+CREATE OR REPLACE TRIGGER trg_delete_message
+AFTER DELETE ON EMP_DEMO
+BEGIN
+    DBMS_OUTPUT.PUT_LINE(
+        'A DELETE statement was executed on EMP_DEMO.'
+    );
+END;
+/
+
+
+DELETE FROM EMP_DEMO
+WHERE DEPARTMENT_ID = 60;
+
+
+select * from EMP_DEMO
