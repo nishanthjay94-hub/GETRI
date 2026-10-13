@@ -204,6 +204,119 @@ BEGIN
 END;
 
 
+CURSORS
+
+-- Implicit Cursor
+BEGIN
+    UPDATE HR.EMPLOYEES
+    SET SALARY = SALARY * 1.10
+    WHERE EMPLOYEE_ID = 100;
+
+    DBMS_OUTPUT.PUT_LINE(
+        'Rows updated: ' || SQL%ROWCOUNT
+    );
+END;
+
+-- Explicit cursor using OPEN, FETCH and CLOSE
+
+/* Concepts: Explicit cursor, OPEN, FETCH, CLOSE, %NOTFOUND.
+- OPEN executes the cursor query.
+- FETCH retrieves one row at a time.
+- %NOTFOUND becomes true when the last fetch fails to return a row.
+- CLOSE releases the cursor.   */
+DECLARE
+    CURSOR c_emp IS
+        SELECT FIRST_NAME, LAST_NAME, SALARY
+        FROM HR.EMPLOYEES
+        WHERE DEPARTMENT_ID = 50;
+
+    v_first_name HR.EMPLOYEES.FIRST_NAME%TYPE;
+    v_last_name  HR.EMPLOYEES.LAST_NAME%TYPE;
+    v_salary     HR.EMPLOYEES.SALARY%TYPE;
+BEGIN
+    OPEN c_emp;
+
+    LOOP
+        FETCH c_emp
+        INTO v_first_name, v_last_name, v_salary;
+
+        EXIT WHEN c_emp%NOTFOUND;
+
+        DBMS_OUTPUT.PUT_LINE(
+            v_first_name || ' ' ||
+            v_last_name || ' - ' || v_salary
+        );
+    END LOOP;
+
+    CLOSE c_emp;
+END;
+/
+
+
+
+-- CUROSR FOR LOOP
+
+
+BEGIN
+    FOR emp IN (
+        SELECT EMPLOYEE_ID, FIRST_NAME, SALARY
+        FROM HR.EMPLOYEES
+        WHERE DEPARTMENT_ID = 60
+    )
+    LOOP
+        DBMS_OUTPUT.PUT_LINE(
+            emp.EMPLOYEE_ID || ' - ' ||
+            emp.FIRST_NAME || ' - ' ||
+            emp.SALARY
+        );
+    END LOOP;
+END;
+/
+
+/* Cursor attributes %FOUND, %NOTFOUND, %ROWCOUNT, %ISOPEN
+Problem: Display the first employee fetched from department 50 and demonstrate cursor attributes. */
+
+DECLARE
+    CURSOR c_emp IS
+        SELECT EMPLOYEE_ID, FIRST_NAME
+        FROM HR.EMPLOYEES
+        WHERE DEPARTMENT_ID = 50
+        ORDER BY EMPLOYEE_ID;
+
+    v_id   HR.EMPLOYEES.EMPLOYEE_ID%TYPE;
+    v_name HR.EMPLOYEES.FIRST_NAME%TYPE;
+BEGIN
+    OPEN c_emp;
+
+    DBMS_OUTPUT.PUT_LINE(
+        'Cursor open: ' ||
+        CASE WHEN c_emp%ISOPEN THEN 'YES' ELSE 'NO' END
+    );
+
+    FETCH c_emp INTO v_id, v_name;
+
+    IF c_emp%FOUND THEN
+        DBMS_OUTPUT.PUT_LINE(
+            'Employee: ' || v_id || ' - ' || v_name
+        );
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('No employee found.');
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE(
+        'Rows fetched: ' || c_emp%ROWCOUNT
+    );
+
+    CLOSE c_emp;
+
+    DBMS_OUTPUT.PUT_LINE(
+        'Cursor open after close: ' ||
+        CASE WHEN c_emp%ISOPEN THEN 'YES' ELSE 'NO' END
+    );
+END;
+/
+
+
 
 
 
