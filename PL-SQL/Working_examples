@@ -411,6 +411,101 @@ END;
 
 
 
+PACKAGES
+
+
+CREATE OR REPLACE PACKAGE emp_pkg AS
+
+    PROCEDURE show_employee(
+        p_emp_id IN NUMBER
+    );
+
+    FUNCTION annual_salary(
+        p_emp_id IN NUMBER
+    ) RETURN NUMBER;
+
+END emp_pkg;
+/
+
+
+
+CREATE OR REPLACE PACKAGE BODY emp_pkg AS
+
+    PROCEDURE show_employee(
+        p_emp_id IN NUMBER
+    )
+    IS
+        v_name EMP_DEMO.FIRST_NAME%TYPE;
+        v_salary EMP_DEMO.SALARY%TYPE;
+    BEGIN
+        SELECT FIRST_NAME, SALARY
+        INTO v_name, v_salary
+        FROM EMP_DEMO
+        WHERE EMPLOYEE_ID = p_emp_id;
+
+        DBMS_OUTPUT.PUT_LINE('Name: ' || v_name);
+        DBMS_OUTPUT.PUT_LINE('Salary: ' || v_salary);
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE('Employee not found.');
+    END show_employee;
+
+
+
+CREATE OR REPLACE PACKAGE BODY emp_pkg AS
+
+    PROCEDURE show_employee(
+        p_emp_id IN NUMBER
+    )
+    IS
+        v_name EMP_DEMO.FIRST_NAME%TYPE;
+        v_salary EMP_DEMO.SALARY%TYPE;
+    BEGIN
+        SELECT FIRST_NAME, SALARY
+        INTO v_name, v_salary
+        FROM EMP_DEMO
+        WHERE EMPLOYEE_ID = p_emp_id;
+
+        DBMS_OUTPUT.PUT_LINE('Name: ' || v_name);
+        DBMS_OUTPUT.PUT_LINE('Salary: ' || v_salary);
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE('Employee not found.');
+    END show_employee;
+
+
+    FUNCTION annual_salary(
+        p_emp_id IN NUMBER
+    ) RETURN NUMBER
+    IS
+        v_salary EMP_DEMO.SALARY%TYPE;
+    BEGIN
+        SELECT SALARY
+        INTO v_salary
+        FROM EMP_DEMO
+        WHERE EMPLOYEE_ID = p_emp_id;
+
+        RETURN v_salary * 12;
+    END annual_salary;
+
+END emp_pkg;
+/
+
+
+
+BEGIN
+    emp_pkg.show_employee(100);
+
+    DBMS_OUTPUT.PUT_LINE(
+        'Annual salary: ' || emp_pkg.annual_salary(100)
+    );
+END;
+/
+
+
+
 
 
 
