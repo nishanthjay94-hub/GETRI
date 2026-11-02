@@ -1,0 +1,354 @@
+
+import os
+from pathlib import Path
+
+import streamlit as st
+from dotenv import load_dotenv
+from openai import OpenAI
+from pypdf import PdfReader
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+
+# 1. Configuration
+
+load_dotenv()
+
+API_KEY = os.getenv("OPENROUTER_API_KEY")
+MODEL_NAME = os.getenv("OPENROUTER_MODEL", "openrouter/free")
+
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(exist_ok=True)
+
+st.set_page_config(
+    page_title="HR Policy Keyword RAG",
+    page_icon="📄",
+    layout="wide",
+)
+
+
+# 2. Helper functions
+
+
+def extract_text_from_pdf(pdf_path):
+    """Read all text from a PDF."""
+
+    reader = PdfReader(pdf_path)
+
+    pages = []
+
+    for page in reader.pages:
+        text = page.extract_text() or ""
+        pages.append(text)
+
+    return "\n".join(pages)
+
+
+def split_text(text, chunk_size=800, overlap=100):
+    """Split text into overlapping character-based chunks."""
+
+    text = " ".join(text.split())
+
+    chunks = []
+    start = 0
+
+    while start < len(text):
+
+        end = start + chunk_size
+
+        chunk = text[start:end].strip()
+
+        if chunk:
+            chunks.append(chunk)
+
+        start += chunk_size - overlap
+
+    return chunks
+
+
+# 3. Build Keyword Search Index
+
+
+def build_keyword_index(chunks):
+    """
+    Convert text chunks into TF-IDF keyword vectors.
+
+    TF-IDF assigns importance to words based on:
+    - How frequently a word appears in a chunk
+    - How unique the word is across all chunks
+    """
+
+    vectorizer = TfidfVectorizer(
+        lowercase=True,
+        stop_words="english",
+        ngram_range=(1, 2),
+    )
+
+    chunk_vectors = vectorizer.fit_transform(chunks)
+
+    return vectorizer, chunk_vectors
+
+
+# 4. Retrieve Relevant Chunks Using Keywords
+
+
+def retrieve_chunks(question, chunks, vectorizer, chunk_vectors, top_k=3):
+    """
+    Retrieve chunks based on keyword similarity.
+
+    The question is converted into a TF-IDF vector.
+    Cosine similarity measures how closely its keywords
+    match the keywords in each document chunk.
+    """
+
+    question_vector = vectorizer.transform([question])
+
+    similarity_scores = cosine_similarity(
+        question_vector,
+        chunk_vectors,
+    ).flatten()
+
+    # Get indices of top matching chunks
+    top_indices = similarity_scores.argsort()[::-1][:top_k]
+
+    results = []
+
+    for idx in top_indices:
+
+        score = similarity_scores[idx]
+
+        # Ignore chunks with no keyword match
+        if score > 0:
+
+            results.append(
+                {
+                    "chunk": chunks[idx],
+                    "score": float(score),
+                    "index": int(idx),
+                }
+            )
+
+    return results
+
+
+# 5. Generate Answer Using OpenRouter
+
+
+def ask_openrouter(question, retrieved_chunks):
+
+    if not API_KEY:
+        raise ValueError(
+            "OPENROUTER_API_KEY is missing. "
+            "Create a .env file and add your OpenRouter API key."
+        )
+
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=API_KEY,
+    )
+
+    context = "\n\n".join(
+        [
+            f"[Source Chunk {i + 1}]\n{item['chunk']}"
+            for i, item in enumerate(retrieved_chunks)
+        ]
+    )
+
+    prompt = f"""
+You are an HR policy assistant.
+
+Answer the user's question using ONLY the HR document
+context provided below.
+
+Rules:
+1. Do not invent information.
+2. If the answer is not present in the context, say:
+   "I could not find this information in the HR document."
+3. Keep the answer clear and concise.
+4. If useful, mention the relevant policy or section.
+5. Do not use outside knowledge.
+
+HR DOCUMENT CONTEXT:
+{context}
+
+USER QUESTION:
+{question}
+"""
+
+    response = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You answer questions using retrieved "
+                    "HR document context."
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        temperature=0.1,
+    )
+
+    return response.choices[0].message.content
+
+
+# 6. Streamlit UI
+
+
+st.title("📄 HR Policy Keyword-Based RAG Chatbot")
+
+st.write(
+    "Upload an HR policy PDF, build a keyword search index, "
+    "and ask questions about the document."
+)
+
+if not API_KEY:
+    st.warning(
+        "OpenRouter API key not found. "
+        "Add OPENROUTER_API_KEY to your .env file."
+    )
+
+
+uploaded_file = st.file_uploader(
+    "Upload HR Policy PDF",
+    type=["pdf"],
+)
+
+
+if uploaded_file:
+
+    pdf_path = DATA_DIR / uploaded_file.name
+
+    with open(pdf_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+
+    st.success(f"Uploaded: {uploaded_file.name}")
+
+    if st.button("🔨 Build / Rebuild Keyword Index"):
+
+        with st.spinner("Reading PDF..."):
+
+            text = extract_text_from_pdf(pdf_path)
+
+        if not text.strip():
+
+            st.error(
+                "No readable text was found in this PDF. "
+                "Try a text-based PDF rather than a scanned PDF."
+            )
+
+            st.stop()
+
+        with st.spinner("Splitting document into chunks..."):
+
+            chunks = split_text(text)
+
+        with st.spinner("Building keyword index using TF-IDF..."):
+
+            vectorizer, chunk_vectors = build_keyword_index(chunks)
+
+        st.session_state["chunks"] = chunks
+        st.session_state["vectorizer"] = vectorizer
+        st.session_state["chunk_vectors"] = chunk_vectors
+
+        st.success(
+            f"Keyword index created successfully! "
+            f"Number of chunks: {len(chunks)}"
+        )
+
+
+# 7. Question Answering
+
+
+if "chunk_vectors" in st.session_state:
+
+    st.divider()
+
+    st.subheader("Ask a question")
+
+    question = st.text_input(
+        "Example: What is the maternity leave policy?"
+    )
+
+    top_k = st.slider(
+        "Number of chunks to retrieve",
+        min_value=1,
+        max_value=5,
+        value=3,
+    )
+
+    if st.button("🔎 Ask HR"):
+
+        if not question.strip():
+
+            st.warning("Please enter a question.")
+
+            st.stop()
+
+        with st.spinner("Searching using keywords..."):
+
+            results = retrieve_chunks(
+                question,
+                st.session_state["chunks"],
+                st.session_state["vectorizer"],
+                st.session_state["chunk_vectors"],
+                top_k=top_k,
+            )
+
+        if not results:
+
+            st.warning(
+                "No matching keywords found in the HR document. "
+                "Try using different words."
+            )
+
+            st.stop()
+
+        st.subheader("Retrieved Context")
+
+        for i, result in enumerate(results):
+
+            with st.expander(
+                f"Chunk {i + 1} | Keyword Similarity: "
+                f"{result['score']:.3f}"
+            ):
+
+                st.write(result["chunk"])
+
+        with st.spinner("Generating answer using OpenRouter..."):
+
+            try:
+
+                answer = ask_openrouter(
+                    question,
+                    results,
+                )
+
+                st.subheader("🤖 Answer")
+
+                st.write(answer)
+
+            except Exception as e:
+
+                st.error(f"OpenRouter error: {e}")
+
+
+else:
+
+    st.info(
+        "Upload an HR PDF and click "
+        "'Build / Rebuild Keyword Index' to start."
+    )
+
+
+st.divider()
+
+st.caption(
+    "Search: TF-IDF Keyword Matching | "
+    f"LLM: {MODEL_NAME} | "
+    "PDF Reader: PyPDF"
+)
