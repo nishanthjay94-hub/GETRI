@@ -1,0 +1,308 @@
+import os
+import streamlit as st
+from dotenv import load_dotenv
+from pypdf import PdfReader
+from sentence_transformers import SentenceTransformer
+from sarvamai import SarvamAI
+from langchain_openrouter import ChatOpenRouter
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
+# 1. Configuration
+load_dotenv()
+st.set_page_config(page_title="Multilingual HR Chatbot", page_icon="🌐", layout="wide")
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
+
+if not OPENROUTER_API_KEY:
+    st.error("OPENROUTER_API_KEY is missing in your .env file.")
+    st.stop()
+if not SARVAM_API_KEY:
+    st.error("SARVAM_API_KEY is missing in your .env file.")
+    st.stop()
+
+# 2. Load models and clients
+@st.cache_resource
+def load_embedding_model():
+    return SentenceTransformer(
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    )
+
+@st.cache_resource
+def load_sarvam_client():
+    return SarvamAI(api_subscription_key=SARVAM_API_KEY)
+
+@st.cache_resource
+def load_llm():
+    return ChatOpenRouter(
+        model="openai/gpt-4o-mini",
+        api_key=OPENROUTER_API_KEY,
+        temperature=0
+    )
+
+st.title("🌐 Multilingual HR Handbook Assistant")
+st.write("Ask HR questions in English or a supported Indian language.")
+
+with st.spinner("Loading multilingual embedding model..."):
+    try:
+        embedding_model = load_embedding_model()
+        sarvam_client = load_sarvam_client()
+        llm = load_llm()
+    except Exception as e:
+        st.error(f"Could not initialize an AI service: {e}")
+        st.stop()
+
+# 3. Languages
+LANGUAGES = {
+    "English": "en-IN",
+    "Hindi": "hi-IN",
+    "Tamil": "ta-IN",
+    "Telugu": "te-IN",
+    "Kannada": "kn-IN",
+    "Malayalam": "ml-IN",
+    "Bengali": "bn-IN",
+    "Gujarati": "gu-IN",
+    "Marathi": "mr-IN",
+    "Punjabi": "pa-IN",
+    "Odia": "od-IN"
+}
+
+# 4. Sarvam translation
+def translate_text(text, source_language, target_language):
+    if source_language == target_language:
+        return text
+    response = sarvam_client.text.translate(
+        input=text,
+        source_language_code=source_language,
+        target_language_code=target_language,
+        model="mayura:v1",
+        mode="formal"
+    )
+    translated = getattr(response, "translated_text", None)
+    if not translated:
+        raise ValueError("Sarvam returned an empty translation.")
+    return translated
+
+# 5. PDF extraction
+def extract_pdf(pdf_file):
+    pdf_file.seek(0)
+    reader = PdfReader(pdf_file)
+    pages = []
+    for page_number, page in enumerate(reader.pages, start=1):
+        text = (page.extract_text() or "").strip()
+        if text:
+            pages.append({"page": page_number, "text": text})
+    return pages
+
+# 6. Overlapping chunks, retaining page numbers
+def chunk_text(pages, chunk_size=1200, overlap=200):
+    if overlap >= chunk_size:
+        raise ValueError("overlap must be smaller than chunk_size.")
+    chunks = []
+    step = chunk_size - overlap
+    for page_data in pages:
+        text = page_data["text"]
+        page_number = page_data["page"]
+        start = 0
+        while start < len(text):
+            part = text[start:start + chunk_size].strip()
+            if part:
+                chunks.append({"page": page_number, "text": part})
+            start += step
+    return chunks
+
+# 7. Create multilingual embeddings
+def build_knowledge_base(chunks):
+    texts = [item["text"] for item in chunks]
+    return embedding_model.encode(
+        texts,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+        show_progress_bar=False
+    )
+
+# 8. Semantic retrieval using original and translated questions
+def retrieve_context(original_question, english_question, chunks,
+                     document_embeddings, top_k=5):
+    queries = [original_question]
+    if english_question.strip().lower() != original_question.strip().lower():
+        queries.append(english_question)
+
+    query_embeddings = embedding_model.encode(
+        queries,
+        convert_to_numpy=True,
+        normalize_embeddings=True
+    )
+    similarity_matrix = query_embeddings @ document_embeddings.T
+    scores = similarity_matrix.max(axis=0)
+    top_indices = scores.argsort()[::-1][:top_k]
+
+    results = []
+    for index in top_indices:
+        results.append({
+            "page": chunks[index]["page"],
+            "text": chunks[index]["text"],
+            "score": float(scores[index])
+        })
+    return results
+
+# 9. Prepare context
+def prepare_context(results):
+    sections = []
+    for rank, result in enumerate(results, start=1):
+        sections.append(
+            f"SOURCE {rank} (PDF page {result['page']}, "
+            f"similarity {result['score']:.4f})\n{result['text']}"
+        )
+    return "\n\n---\n\n".join(sections)
+
+# 10. LangChain prompt and chain
+prompt = PromptTemplate(
+    input_variables=["context", "question"],
+    template="""
+You are an HR policy assistant. Answer using only the HR handbook extracts.
+
+- Read all supplied extracts before answering.
+- The answer may be expressed using different wording.
+- Include timings, dates and conditions when present.
+- Do not invent or assume company policies.
+- If the extracts do not contain enough information, say:
+  "The information is not available in the HR handbook."
+
+HR HANDBOOK EXTRACTS:
+{context}
+
+EMPLOYEE QUESTION:
+{question}
+
+ANSWER:
+"""
+)
+chain = prompt | llm | StrOutputParser()
+
+# 11. User interface
+selected_language = st.selectbox("Select your preferred language", list(LANGUAGES.keys()))
+language_code = LANGUAGES[selected_language]
+
+uploaded_pdf = st.file_uploader("Upload your HR Handbook PDF", type=["pdf"])
+
+# 12. Build the knowledge base
+if uploaded_pdf is not None:
+    if st.button("Build HR Knowledge Base", type="primary"):
+        try:
+            with st.spinner("Extracting text from PDF..."):
+                pages = extract_pdf(uploaded_pdf)
+
+            if not pages:
+                st.error(
+                    "No selectable text was found. If this is a scanned PDF, "
+                    "OCR is required before indexing."
+                )
+            else:
+                with st.spinner("Creating text chunks..."):
+                    chunks = chunk_text(pages)
+
+                with st.spinner("Creating multilingual embeddings..."):
+                    embeddings = build_knowledge_base(chunks)
+
+                st.session_state["chunks"] = chunks
+                st.session_state["embeddings"] = embeddings
+                st.session_state["ready"] = True
+                st.session_state["pdf_name"] = uploaded_pdf.name
+
+                st.success("HR Knowledge Base created successfully!")
+                st.write(f"Pages with text: {len(pages)}")
+                st.write(f"Chunks created: {len(chunks)}")
+        except Exception as e:
+            st.error(f"Error while building the knowledge base: {e}")
+
+# 13. Ask questions
+if st.session_state.get("ready", False):
+    st.divider()
+    st.subheader("Ask your HR question")
+    st.caption(f"Knowledge base: {st.session_state.get('pdf_name', 'Uploaded PDF')}")
+
+    user_question = st.text_input(
+        f"Enter your question in {selected_language}",
+        key="hr_question"
+    )
+
+    if st.button("Ask HR Assistant"):
+        if not user_question.strip():
+            st.warning("Please enter a question.")
+        else:
+            try:
+                # Step 1: Translate the question to English.
+                with st.spinner("Translating question..."):
+                    if language_code == "en-IN":
+                        english_question = user_question
+                    else:
+                        try:
+                            english_question = translate_text(
+                                user_question, language_code, "en-IN"
+                            )
+                        except Exception as translation_error:
+                            st.warning(
+                                "Question translation failed. Trying semantic "
+                                f"search with the original question. Details: {translation_error}"
+                            )
+                            english_question = user_question
+
+                # Step 2: Retrieve relevant chunks.
+                with st.spinner("Searching the HR Handbook..."):
+                    results = retrieve_context(
+                        user_question,
+                        english_question,
+                        st.session_state["chunks"],
+                        st.session_state["embeddings"],
+                        top_k=5
+                    )
+                    context = prepare_context(results)
+
+                # Step 3: Show retrieval diagnostics.
+                with st.expander("Retrieval debug information", expanded=True):
+                    st.write("Original question:", user_question)
+                    st.write("English search question:", english_question)
+                    for rank, result in enumerate(results, start=1):
+                        st.markdown(
+                            f"**Result {rank} — page {result['page']} — "
+                            f"similarity {result['score']:.4f}**"
+                        )
+                        st.write(result["text"])
+
+                # Step 4: Generate answer using retrieved context.
+                with st.spinner("Generating answer from the handbook..."):
+                    english_answer = chain.invoke({
+                        "context": context,
+                        "question": english_question
+                    })
+
+                # Step 5: Translate answer back to selected language.
+                with st.spinner(f"Translating answer into {selected_language}..."):
+                    if language_code == "en-IN":
+                        final_answer = english_answer
+                    else:
+                        try:
+                            final_answer = translate_text(
+                                english_answer, "en-IN", language_code
+                            )
+                        except Exception as translation_error:
+                            st.warning(
+                                "Answer translation failed; showing English. "
+                                f"Details: {translation_error}"
+                            )
+                            final_answer = english_answer
+
+                # Step 6: Display answer.
+                st.divider()
+                st.subheader(f"HR Assistant Response — {selected_language}")
+                st.success(final_answer)
+
+                with st.expander("View English answer"):
+                    st.write(english_answer)
+
+            except Exception as e:
+                st.error(f"Application error: {e}")
+else:
+    st.info("Upload your HR Handbook PDF and click 'Build HR Knowledge Base' to begin.")
