@@ -1,0 +1,202 @@
+
+import os
+import streamlit as st
+from dotenv import load_dotenv
+from pypdf import PdfReader
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+from langchain_openrouter import ChatOpenRouter
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
+load_dotenv()
+
+st.set_page_config(
+    page_title="HR LangChain",
+    page_icon="🔗"
+)
+
+st.title("🔗 HR Handbook Chatbot")
+st.subheader("Implementation using LangChain")
+
+
+# ---------------- LLM ----------------
+
+llm = ChatOpenRouter(
+    model="openai/gpt-4o-mini",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    temperature=0
+)
+
+
+# ---------------- PDF ----------------
+
+def extract_pdf(pdf):
+
+    reader = PdfReader(pdf)
+
+    text = ""
+
+    for page in reader.pages:
+
+        extracted = page.extract_text()
+
+        if extracted:
+            text += extracted + "\n"
+
+    return text
+
+
+# ---------------- CHUNKING ----------------
+
+def chunk_text(text, size=800, overlap=150):
+
+    chunks = []
+
+    start = 0
+
+    while start < len(text):
+
+        chunk = text[start:start + size].strip()
+
+        if chunk:
+            chunks.append(chunk)
+
+        start += size - overlap
+
+    return chunks
+
+
+# ---------------- RETRIEVAL ----------------
+
+def build_index(chunks):
+
+    vectorizer = TfidfVectorizer(
+        stop_words="english",
+        ngram_range=(1, 2)
+    )
+
+    vectors = vectorizer.fit_transform(
+        chunks
+    )
+
+    return vectorizer, vectors
+
+
+def retrieve(query, vectorizer, vectors, chunks, top_k=4):
+
+    query_vector = vectorizer.transform(
+        [query]
+    )
+
+    scores = cosine_similarity(
+        query_vector,
+        vectors
+    )[0]
+
+    ranked = scores.argsort()[::-1]
+
+    results = []
+
+    for index in ranked:
+
+        if scores[index] <= 0:
+            continue
+
+        results.append(chunks[index])
+
+        if len(results) >= top_k:
+            break
+
+    return results
+
+
+# ---------------- LANGCHAIN PROMPT ----------------
+
+prompt = ChatPromptTemplate.from_template("""
+You are an HR Handbook Assistant.
+
+Answer only using the provided context.
+Never invent policy information.
+
+If the answer is missing, say:
+"The HR handbook does not specify this."
+
+Context:
+{context}
+
+Employee question:
+{question}
+
+Answer:
+""")
+
+
+# ---------------- LANGCHAIN CHAIN ----------------
+
+parser = StrOutputParser()
+
+chain = prompt | llm | parser
+
+
+# ---------------- STREAMLIT UI ----------------
+
+uploaded_pdf = st.file_uploader(
+    "Upload HR Handbook PDF",
+    type="pdf"
+)
+
+if uploaded_pdf:
+
+    if st.button("Build HR Index"):
+
+        text = extract_pdf(uploaded_pdf)
+
+        chunks = chunk_text(text)
+
+        vectorizer, vectors = build_index(
+            chunks
+        )
+
+        st.session_state.chunks = chunks
+        st.session_state.vectorizer = vectorizer
+        st.session_state.vectors = vectors
+
+        st.session_state.ready = True
+
+        st.success(
+            f"Index created: {len(chunks)} chunks"
+        )
+
+
+if st.session_state.get("ready"):
+
+    query = st.text_input(
+        "Ask your HR question"
+    )
+
+    if st.button("Generate Answer"):
+
+        results = retrieve(
+            query,
+            st.session_state.vectorizer,
+            st.session_state.vectors,
+            st.session_state.chunks
+        )
+
+        context = "\n\n".join(results)
+
+        response = chain.invoke({
+            "context": context,
+            "question": query
+        })
+
+        st.subheader("Answer")
+
+        st.write(response)
+
+        with st.expander("View retrieved context"):
+
+            st.write(context)
