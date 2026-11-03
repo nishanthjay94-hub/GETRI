@@ -1,0 +1,332 @@
+
+import os
+from typing import TypedDict
+
+import streamlit as st
+from dotenv import load_dotenv
+from pypdf import PdfReader
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+from langchain_openrouter import ChatOpenRouter
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
+from langgraph.graph import StateGraph, START, END
+
+load_dotenv()
+
+st.set_page_config(
+    page_title="HR LangGraph",
+    page_icon="🔀"
+)
+
+st.title("🔀 HR Handbook Chatbot")
+st.subheader("Implementation using LangGraph")
+
+
+# ---------------- LLM ----------------
+
+llm = ChatOpenRouter(
+    model="openai/gpt-4o-mini",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    temperature=0
+)
+
+
+# ---------------- PDF EXTRACTION ----------------
+
+def extract_pdf(pdf):
+
+    reader = PdfReader(pdf)
+
+    text = ""
+
+    for page in reader.pages:
+
+        page_text = page.extract_text()
+
+        if page_text:
+            text += page_text + "\n"
+
+    return text
+
+
+# ---------------- CHUNKING ----------------
+
+def chunk_text(text, size=800, overlap=150):
+
+    chunks = []
+
+    start = 0
+
+    while start < len(text):
+
+        chunk = text[start:start + size].strip()
+
+        if chunk:
+            chunks.append(chunk)
+
+        start += size - overlap
+
+    return chunks
+
+
+# ---------------- RETRIEVAL INDEX ----------------
+
+def build_index(chunks):
+
+    vectorizer = TfidfVectorizer(
+        stop_words="english",
+        ngram_range=(1, 2)
+    )
+
+    vectors = vectorizer.fit_transform(
+        chunks
+    )
+
+    return vectorizer, vectors
+
+
+def retrieve(query, vectorizer, vectors, chunks):
+
+    query_vector = vectorizer.transform(
+        [query]
+    )
+
+    scores = cosine_similarity(
+        query_vector,
+        vectors
+    )[0]
+
+    ranked = scores.argsort()[::-1]
+
+    results = []
+
+    for index in ranked:
+
+        if scores[index] <= 0:
+            continue
+
+        results.append(chunks[index])
+
+        if len(results) >= 4:
+            break
+
+    return results
+
+
+# ---------------- SHARED STATE ----------------
+
+class HRState(TypedDict):
+
+    question: str
+
+    context: str
+
+    answer: str
+
+    valid: bool
+
+
+# ---------------- NODE 1: VALIDATION ----------------
+
+def validate_node(state: HRState):
+
+    question = state["question"].strip()
+
+    if not question:
+
+        return {
+            "valid": False
+        }
+
+    return {
+        "valid": True
+    }
+
+
+# ---------------- NODE 2: RETRIEVAL ----------------
+
+def retrieval_node(state: HRState):
+
+    chunks = retrieve(
+        state["question"],
+        st.session_state.vectorizer,
+        st.session_state.vectors,
+        st.session_state.chunks
+    )
+
+    context = "\n\n".join(chunks)
+
+    return {
+        "context": context
+    }
+
+
+# ---------------- NODE 3: ANSWER ----------------
+
+def answer_node(state: HRState):
+
+    prompt = ChatPromptTemplate.from_template("""
+    You are an HR Handbook Assistant.
+
+    Answer only from the provided HR context.
+    Do not invent policies.
+
+    If unavailable, say:
+    "The handbook does not specify this."
+
+    Context:
+    {context}
+
+    Question:
+    {question}
+    """)
+
+    chain = prompt | llm | StrOutputParser()
+
+    answer = chain.invoke({
+        "context": state["context"],
+        "question": state["question"]
+    })
+
+    return {
+        "answer": answer
+    }
+
+
+# ---------------- NODE 4: FALLBACK ----------------
+
+def fallback_node(state: HRState):
+
+    return {
+        "answer": (
+            "Please enter a valid question "
+            "about the HR handbook."
+        )
+    }
+
+
+# ---------------- CONDITIONAL ROUTING ----------------
+
+def route_after_validation(state: HRState):
+
+    if state["valid"]:
+
+        return "retrieve"
+
+    return "fallback"
+
+
+# ---------------- BUILD GRAPH ----------------
+
+def build_graph():
+
+    workflow = StateGraph(HRState)
+
+    workflow.add_node(
+        "validate",
+        validate_node
+    )
+
+    workflow.add_node(
+        "retrieve",
+        retrieval_node
+    )
+
+    workflow.add_node(
+        "answer",
+        answer_node
+    )
+
+    workflow.add_node(
+        "fallback",
+        fallback_node
+    )
+
+    workflow.add_edge(
+        START,
+        "validate"
+    )
+
+    workflow.add_conditional_edges(
+        "validate",
+        route_after_validation,
+        {
+            "retrieve": "retrieve",
+            "fallback": "fallback"
+        }
+    )
+
+    workflow.add_edge(
+        "retrieve",
+        "answer"
+    )
+
+    workflow.add_edge(
+        "answer",
+        END
+    )
+
+    workflow.add_edge(
+        "fallback",
+        END
+    )
+
+    return workflow.compile()
+
+
+# ---------------- STREAMLIT UI ----------------
+
+uploaded_pdf = st.file_uploader(
+    "Upload HR Handbook PDF",
+    type="pdf"
+)
+
+if uploaded_pdf:
+
+    if st.button("Build HR Index"):
+
+        text = extract_pdf(uploaded_pdf)
+
+        chunks = chunk_text(text)
+
+        vectorizer, vectors = build_index(
+            chunks
+        )
+
+        st.session_state.chunks = chunks
+        st.session_state.vectorizer = vectorizer
+        st.session_state.vectors = vectors
+
+        st.session_state.ready = True
+
+        st.success("HR Handbook index built!")
+
+
+if st.session_state.get("ready"):
+
+    question = st.text_input(
+        "Enter your HR question"
+    )
+
+    if st.button("Run LangGraph Workflow"):
+
+        app = build_graph()
+
+        result = app.invoke({
+            "question": question,
+            "context": "",
+            "answer": "",
+            "valid": False
+        })
+
+        st.subheader("Final Answer")
+
+        st.write(result["answer"])
+
+        with st.expander("View Workflow State"):
+
+            st.json(result)
