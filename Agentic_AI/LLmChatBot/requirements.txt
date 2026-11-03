@@ -1,3 +1,12 @@
 streamlit
-openai
 python-dotenv
+pypdf
+sentence-transformers
+faiss-cpu
+openai
+numpy
+scikit-learn
+langchain
+langchain-core
+langchain-openrouter
+langgraph
